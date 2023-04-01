@@ -173,7 +173,7 @@ def create_local_pnmodel():
     local_model.eval()
     return local_model
 
-def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog=SimpleWorkLog):
+def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog=SimpleWorkLog, triton_server=None):
     #import importlib
     #from utils.mlbench import SimpleWorkLog as worklog
     worklogs = []
@@ -189,7 +189,7 @@ def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog
     triton_model = None
     errors = None
     if triton:
-        triton_model = get_triton_client()
+        triton_model = get_triton_client() if triton_server is None else get_triton_client(server=triton_server)
         with_outputs, inf_worklogs, errors = run_inference_pnmodel(
             inputs, 
             triton_model, 
@@ -218,3 +218,4 @@ def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog
            }
     
 #Additional model to test: https://github.com/suyong-choi/ABCDnn
+#Particle Transformer
