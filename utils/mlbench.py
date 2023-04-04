@@ -10,24 +10,34 @@ import torch
 
 class SimpleWorkLog:
     def __init__(self, label=""):
+        """Create a worklog which stores basic info, most importantly a starting and ending timestamp and a label, as well as 
+        info identifying the worker it was produced on."""
         self.label = label
         self.hostname = socket.gethostname()
         self.pid = os.getpid()
         self.start_time = None
         self.end_time = None
         self.interval = None
+        self.model = None
+        self.version = None
         self.batchsize = []
         self.bytesize = []
         
     def start(self, model_name=None, model_version=None):
+        # Store a timestamp, as well as start a high-precision counter for the interval.
         self.start_time = time.gmtime()
         self.interval = time.perf_counter()
+        # If an inference request, also store the model name and version
+        self.model=model_name
+        self.model_version=model_version
         
-    def log_inference(self, batchsize, bytesize):
+    def log_inference(self, batchsize=None, bytesize=None):
+        # If we're doing inference, store the batchsize and bytesize for stat analysis later (multiple batches per WorkLog are expected)
         self.batchsize.append(batchsize)
         self.bytesize.append(bytesize)
         
     def end(self):
+        # Finish the time-interval, and add another timestamp for redundancy
         self.interval = time.perf_counter() - self.interval
         self.end_time = time.gmtime()
         
@@ -68,7 +78,8 @@ def run_inference_pnmodel(record_array, model, batchsize=1024, triton=False, wor
     worklogs (list): List of worklogs tracking stats about the inference
     errors (None | list): List of triton inference errors, if any
     
-    Restructure data from scikit-hep format to one suitable for inference (batched) with triton or local ParticleNet
+    Restructure data from scikit-hep format to one suitable for inference (batched) with triton or local ParticleNet,
+    and perform the inference
     """
     counts, flattened_record = ak.num(record_array), ak.flatten(record_array)
     total_records = len(flattened_record)
@@ -95,6 +106,7 @@ def run_inference_pnmodel(record_array, model, batchsize=1024, triton=False, wor
             X["points__0"] = ak.to_numpy(flattened_record["points", start:stop]);
             X["features__1"] = ak.to_numpy(flattened_record["features", start:stop])
             X["mask__2"] = ak.to_numpy(flattened_record["mask", start:stop])
+            # Calculate the bytes of the numpy arrays sent for the purpose of analyzing data sent
             for val in X.values():
                 nbytes += val.nbytes
             worklogs[-1].end()
@@ -146,8 +158,7 @@ def get_triton_client(model_and_version="pn_demo/1", server="triton+grpc://trito
     Returns:
     triton_model_client (triton client): A client capable of running inference on 
     
-    Create data in a format analogous to High Energy Physics data as processed with the scikit-hep ecosystem.
-    This is a stand-in for loading data stored in .root files via coffea
+    Sets up the triton client, ready to perform inference requests
     """
     from utils.tritonutils import wrapped_triton
 
@@ -155,7 +166,7 @@ def get_triton_client(model_and_version="pn_demo/1", server="triton+grpc://trito
     triton_model = wrapped_triton(server + model_and_version)
     return triton_model
 
-def create_local_pnmodel():
+def create_local_pnmodel(dev="cpu"):
     from models.ParticleNet import ParticleNetTagger
     import torch
 
@@ -169,11 +180,19 @@ def create_local_pnmodel():
                             for_inference=False)
 
     LOCAL_PATH = "/srv/models/pn_demo.pt"
-    local_model.load_state_dict(torch.load(LOCAL_PATH, map_location=torch.device('cpu')))
+    local_model.load_state_dict(torch.load(LOCAL_PATH, map_location=torch.device(dev)))
     local_model.eval()
     return local_model
 
 def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog=SimpleWorkLog, triton_server=None):
+    """
+    seed (int): A seed for pseudo-random data generation
+    chunksize (int): A number of pseudo-'events' to generate, for each of which a random number of sub-objects are created
+    batchsize (int): Number of inference requests in a batch. When smaller than the sum of objects across all events (~5.5*chunksize), is done iteratively
+    triton (bool): Flat for whether to perform local inferene or Triton inference
+    worklog (function): A worklog function with a 'start(model_name=None, model_version=None)', 'end()', and 'log_inference(batchsize, numbytes)' functions
+    triton_server (http address): Address of the triton_server to pass to get_triton_client [Default: triton+grpc://triton.apps.okddev.fnal.gov:443/]
+    """
     #import importlib
     #from utils.mlbench import SimpleWorkLog as worklog
     worklogs = []
@@ -206,6 +225,7 @@ def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog
             triton=False, 
             worklog=SimpleWorkLog
         )
+    # Add with the worklogs for return to the original working client
     worklogs += inf_worklogs
     
     return {"worklogs": worklogs, 
@@ -217,5 +237,7 @@ def process_function(seed, chunksize=1000, batchsize=1024, triton=False, worklog
             "triton_errors": errors,
            }
     
-#Additional model to test: https://github.com/suyong-choi/ABCDnn
-#Particle Transformer
+#Additional models to test
+# https://github.com/suyong-choi/ABCDnn
+# Particle Transformer
+# Moderately complex BDT
