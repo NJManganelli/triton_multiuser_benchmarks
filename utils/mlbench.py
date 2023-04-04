@@ -98,6 +98,7 @@ def run_inference_pnmodel(record_array, model, batchsize=1024, triton=False, wor
         #except:
         #    pass
         nbytes = 0
+        # This function could swap the inner and outer loop, at the cost of memory, and async could be an option for the requests.
         if triton:
             # Restructure
             worklogs.append(SimpleWorkLog("RestructureInputs"))
